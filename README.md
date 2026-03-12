@@ -1,2 +1,2 @@
-# Talent_Finder_Backend
-Backend service for managing resume candidate scoring, and shortlisting workflows.
+# Talent_Finder_Backend_Sourcing
+Backend service for sourcing candidates
