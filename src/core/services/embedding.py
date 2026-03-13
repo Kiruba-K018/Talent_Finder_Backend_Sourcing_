@@ -1,53 +1,30 @@
-from sentence_transformers import SentenceTransformer
-from src.data.clients.chroma_client import get_or_create_collection
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+from src.data.clients.chroma_client import get_chroma_client
 from src.config.settings import get_settings
-from src.observability.logging.logger import get_logger
-from src.constants import CHROMA_COLLECTION_NAME
 
-logger = get_logger(__name__)
-_model: SentenceTransformer | None = None
+_ef = SentenceTransformerEmbeddingFunction(
+    model_name=get_settings().embedding_model
+)
 
-
-def get_model() -> SentenceTransformer:
-    global _model
-    if _model is None:
-        settings = get_settings()
-        _model = SentenceTransformer(settings.embedding_model)
-    return _model
-
-
-def build_embedding_text(candidate: dict) -> str:
-    parts = [
-        " ".join(candidate.get("hard_skills", [])),
-        " ".join(candidate.get("soft_skills", [])),
-        candidate.get("summary", ""),
-        " ".join(
-            " ".join(e.get("technologies", []))
-            for e in candidate.get("experience", [])
-        ),
-        " ".join(
-            str(p) for p in candidate.get("projects", [])
-        ),
-    ]
-    return " ".join(filter(None, parts))
-
+async def get_or_create_collection():
+    client = await get_chroma_client()
+    return await client.get_or_create_collection(
+        name=get_settings().chroma_collection,
+        embedding_function=_ef,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 async def embed_and_store(candidate_id: str, candidate: dict) -> None:
     text = build_embedding_text(candidate)
     if not text.strip():
-        logger.warning("empty_embedding_text", candidate_id=candidate_id)
         return
-
-    vector = get_model().encode(text).tolist()
-    collection = await get_or_create_collection(CHROMA_COLLECTION_NAME)
-
+    collection = await get_or_create_collection()
     await collection.upsert(
         ids=[candidate_id],
-        embeddings=[vector],
+        documents=[text],        # chromadb embeds this automatically
         metadatas=[{
             "name":     candidate.get("name", ""),
             "location": candidate.get("location", ""),
             "title":    candidate.get("title", ""),
         }],
     )
-    logger.info("embedding_stored", candidate_id=candidate_id)
