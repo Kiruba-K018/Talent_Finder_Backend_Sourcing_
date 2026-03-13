@@ -35,3 +35,12 @@ async def update_run_timestamps(
         .values(last_run_at=last_run_at, next_run_at=next_run_at)
     )
     await session.commit()
+
+
+
+
+async def fetch_config_by_id(session: AsyncSession, config_id: UUID) -> SourcingConfig | None:
+    result = await session.execute(
+        select(SourcingConfig).where(SourcingConfig.id == config_id)
+    )
+    return result.scalar_one_or_none()

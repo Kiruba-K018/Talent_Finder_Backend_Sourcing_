@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
-from src.api.rest.routes import health, sse
+from src.api.rest.routes import health, sse, sourcing
 from src.observability.logging.logger import configure_logging
 from src.observability.tracing.tracer import configure_tracing
 from src.observability.metrics.prometheus import start_metrics_server
@@ -28,4 +28,5 @@ def create_app() -> FastAPI:
     FastAPIInstrumentor.instrument_app(app)
     app.include_router(health.router)
     app.include_router(sse.router)
+    app.include_router(sourcing.router)
     return app
