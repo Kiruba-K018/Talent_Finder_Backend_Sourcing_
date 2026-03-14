@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone, timedelta
-from uuid import UUID
+from sqlalchemy import text
 from src.data.clients.postgres_client import get_session_factory
 from src.data.repositories.sourcing_config_repo import (
     fetch_due_configs,
@@ -33,7 +33,31 @@ def _compute_next_run(frequency: str, scheduled_time, scheduled_day: str) -> dat
     return now + timedelta(hours=1)
 
 
+async def _wait_for_db(max_retries: int = 30) -> None:
+    """Wait for database to be ready before starting scheduler."""
+    for attempt in range(max_retries):
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                await session.execute(text("SELECT 1"))
+            logger.info("database_ready", attempt=attempt)
+            return
+        except Exception as exc:
+            wait_time = min(2 ** attempt, 10)
+            logger.warning("database_not_ready", attempt=attempt, wait_seconds=wait_time, error=str(exc))
+            await asyncio.sleep(wait_time)
+    
+    logger.error("database_connection_failed", max_retries=max_retries)
+    raise Exception("Could not connect to database after retries")
+
+
 async def run_scheduler_loop() -> None:
+    try:
+        await _wait_for_db()
+    except Exception as exc:
+        logger.error("scheduler_startup_failed", error=str(exc))
+        return
+
     logger.info("scheduler_started", poll_interval=settings.scheduler_poll_interval)
 
     while True:

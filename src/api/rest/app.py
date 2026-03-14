@@ -1,12 +1,12 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from src.api.rest.routes import health, sse, sourcing
+from src.api.rest.routes import health, sourcing
 from src.observability.logging.logger import configure_logging
 from src.observability.tracing.tracer import configure_tracing
 from src.observability.metrics.prometheus import start_metrics_server
 from src.data.clients.mongo_client import close_mongo_client
 from src.data.clients.postgres_client import dispose_engine
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 
 @asynccontextmanager
@@ -25,8 +25,15 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-    FastAPIInstrumentor.instrument_app(app)
+    app.add_middleware(
+    # Add CORS FIRST, before any other middleware or routers
+        CORSMiddleware,
+        allow_origins=["*"],  # temporary: allow all origins
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.include_router(health.router)
-    app.include_router(sse.router)
     app.include_router(sourcing.router)
     return app
