@@ -5,9 +5,25 @@ def _sha256(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def compute_identity_hash(name: str, email: str, location: str) -> str:
-    """Detects duplicate profiles across platforms."""
-    normalized = f"{name.strip().lower()}|{email.strip().lower()}|{location.strip().lower()}"
+def compute_identity_hash(name: str, email: str, location: str, profile_url: str = "") -> str:
+    """Detects duplicate profiles across platforms.
+    
+    Priority:
+    1. LinkedIn profile URL (most unique)
+    2. Email + Name (if email exists)
+    3. Name + Location fallback
+    """
+    # LinkedIn URL is the strongest identifier
+    if profile_url and "linkedin.com" in profile_url.lower():
+        # Extract unique LinkedIn username from URL
+        normalized = profile_url.strip().lower()
+    # If email exists, use it as strong identifier
+    elif email and email.strip():
+        normalized = f"{name.strip().lower()}|{email.strip().lower()}"
+    # Fallback to name + location
+    else:
+        normalized = f"{name.strip().lower()}|{location.strip().lower()}"
+    
     return _sha256(normalized)
 
 

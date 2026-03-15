@@ -33,7 +33,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
+    
     app.include_router(health.router)
     app.include_router(sourcing.router)
     return app

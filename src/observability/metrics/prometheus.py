@@ -34,4 +34,4 @@ pipeline_duration_seconds = Histogram(
 
 def start_metrics_server() -> None:
     settings = get_settings()
-    start_http_server(settings.prometheus_port)
+    start_http_server(settings.prometheus_port, addr="0.0.0.0")

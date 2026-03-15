@@ -6,6 +6,11 @@ __pycache__/
 # C extensions
 *.so
 
+src/core/services/parser_backup.py
+src/core/services/parser_old.py
+
+
+
 # Distribution / packaging
 .Python
 build/

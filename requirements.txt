@@ -23,8 +23,8 @@ opentelemetry-instrumentation
 opentelemetry-instrumentation-fastapi
 opentelemetry-instrumentation-requests
 opentelemetry-exporter-otlp
-
+langchain
+langchain-groq
 python-dotenv
-
 python-dateutil
 pytz

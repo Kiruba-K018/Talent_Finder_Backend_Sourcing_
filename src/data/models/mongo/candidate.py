@@ -15,7 +15,7 @@ class EducationEntry(TypedDict):
 
 class CandidateDocument(TypedDict):
     _id:              str          # candidate_id (UUID str)
-    name:             str
+    candidate_name:             str
     email:            str
     phone:            str
     location:         str
