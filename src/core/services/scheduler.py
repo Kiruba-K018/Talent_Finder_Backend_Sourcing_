@@ -2,6 +2,9 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from src.data.clients.postgres_client import get_session_factory
+
+# IST = UTC+5:30 (Indian Standard Time)
+IST = timezone(timedelta(hours=5, minutes=30))
 from src.data.repositories.sourcing_config_repo import (
     fetch_due_configs,
     update_run_timestamps,
@@ -16,7 +19,8 @@ settings = get_settings()
 
 
 def _compute_next_run(frequency: str, scheduled_time, scheduled_day: str) -> datetime:
-    now = datetime.now(timezone.utc)
+    """Compute next run time in IST timezone."""
+    now = datetime.now(IST)
     if frequency == "hourly":
         return now + timedelta(hours=1)
     if frequency == "daily":
@@ -25,7 +29,10 @@ def _compute_next_run(frequency: str, scheduled_time, scheduled_day: str) -> dat
             minute=scheduled_time.minute if scheduled_time else 0,
             second=0,
             microsecond=0,
-        ) + timedelta(days=1)
+        )
+        # If time already passed today, schedule for tomorrow
+        if next_dt <= now:
+            next_dt += timedelta(days=1)
         return next_dt
     if frequency == "weekly":
         days_ahead = 7
@@ -69,7 +76,8 @@ async def run_scheduler_loop() -> None:
 
 
 async def _tick() -> None:
-    now = datetime.now(timezone.utc)
+    """Check for due configs and execute them (all times in IST)."""
+    now = datetime.now(IST)
     factory = get_session_factory()
 
     async with factory() as session:
