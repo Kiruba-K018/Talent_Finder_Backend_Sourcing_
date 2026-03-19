@@ -1,14 +1,15 @@
 import uuid
-from datetime import datetime, timezone
-from src.core.services.scraper import build_driver, login_to_linkedin, search_profiles, fetch_profile_html, inject_session_cookie, get_authenticated_driver
+from datetime import datetime, timezone, timedelta
+from src.core.services.scraper import search_profiles, fetch_profile_html, get_authenticated_driver
 from src.core.services.parser import parse_profile
 from src.core.services.llm import format_candidate_with_llm
 from src.core.services.deduplication import resolve_candidate
 from src.core.services.embedding import embed_and_store
 from src.core.services.candidate_transformer import transform_candidate_to_schema
 from src.handlers.http_clients.core_service_client import send_candidate_to_core, send_source_run_report
-from src.utils.hashing import compute_identity_hash, compute_profile_hash
 from src.utils.query_builder import build_google_search_query
+import hashlib
+import json
 from src.config.settings import get_settings
 from src.observability.logging.logger import get_logger
 from src.observability.metrics.prometheus import candidates_extracted_total
@@ -17,15 +18,59 @@ from src.constants import OUTCOME_SKIP, LINKEDIN_PLATFORM_ID
 logger = get_logger(__name__)
 settings = get_settings()
 
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _get_ist_time(utc_time: datetime = None) -> datetime:
+    """Convert UTC time to IST timezone."""
+    if utc_time is None:
+        # Get current UTC time and convert to IST
+        return datetime.now(timezone.utc).astimezone(IST)
+    return utc_time.astimezone(IST)
+
+
+def _compute_resume_hash(parsed_candidate: dict) -> str:
+    """
+    Compute a hash of the resume content for deduplication.
+    Uses experience, education, skills, and other key profile data.
+    """
+    try:
+        hash_data = {
+            "experience": parsed_candidate.get("experience", []),
+            "education": parsed_candidate.get("education", []),
+            "hard_skills": sorted(parsed_candidate.get("hard_skills", [])),
+            "certifications": parsed_candidate.get("certifications", []),
+            "projects": parsed_candidate.get("projects", []),
+        }
+        hash_string = json.dumps(hash_data, sort_keys=True, default=str)
+        return hashlib.md5(hash_string.encode()).hexdigest()
+    except Exception as e:
+        logger.warning("failed_to_compute_resume_hash", error=str(e))
+        # Return a hash of just the profile URL as fallback
+        profile_url = parsed_candidate.get("profile_url", "")
+        return hashlib.md5(profile_url.encode()).hexdigest()
+
 
 async def run_sourcing_pipeline(config) -> None:
     org_id = str(config.org_id)
     query  = build_google_search_query(config.search_skills, config.search_location)
     source_run_id = uuid.uuid4()
     profiles_fetched = 0
-    run_start_time = datetime.now(timezone.utc)
+    run_start_time = _get_ist_time()
 
     logger.info("pipeline_start", org_id=org_id, query=query, source_run_id=str(source_run_id))
+
+    # Step 0: Create source run record with in_progress status
+    try:
+        await _create_source_run_record(
+            source_run_id=source_run_id,
+            config_id=config.id,
+            run_start_time=run_start_time,
+        )
+    except Exception as e:
+        logger.error("Failed to create source run record", error=str(e))
+        raise
 
     # Step 1: Get authenticated driver with cookie-first strategy
     logger.info("Step 1: Authenticating to LinkedIn...")
@@ -132,42 +177,37 @@ async def _process_profile(driver, url: str, org_id: str) -> int:
             logger.warning(f"LLM formatting failed, using raw parsed data: {str(e)}")
             # Continue with raw parsed data if LLM fails
 
-        # Generate hashes for deduplication
-        hash_identity = compute_identity_hash(
-            parsed_candidate.get("name", ""), 
-            parsed_candidate.get("email", ""), 
-            parsed_candidate.get("location", ""),
-            profile_url=url  # LinkedIn URL is unique identifier
-        )
-        hash_profile = compute_profile_hash(
-            parsed_candidate.get("hard_skills", []),
-            parsed_candidate.get("education", []),
-            parsed_candidate.get("experience", []),
-            parsed_candidate.get("certifications", []),
-        )
-        
-        # Prepare candidate for deduplication
-        candidate_for_dedup = {
-            "hash_identity": hash_identity,
-            "hash_profile": hash_profile,
-            **parsed_candidate,
-        }
+        # Generate resume hash for deduplication
+        try:
+            resume_hash = _compute_resume_hash(parsed_candidate)
+        except Exception as e:
+            logger.error("failed_to_generate_resume_hash", url=url, error=str(e))
+            return 0
         
         # Generate UUID candidate_id for external reference
         candidate_id = str(uuid.uuid4())
         
-        # Add UUID to dedup dict before resolution
-        candidate_for_dedup["candidate_id"] = candidate_id
+        # Prepare candidate for deduplication
+        # The hash field will be compared to detect if the same person has a different resume
+        candidate_for_dedup = {
+            **parsed_candidate,
+            "candidate_id": candidate_id,
+            "hash": resume_hash,  # Resume content hash for deduplication
+        }
         
-        # Resolve candidate (check for duplicates)
-        resolved_id, outcome = await resolve_candidate(candidate_for_dedup)
+        # Resolve candidate (check for duplicates by name+title)
+        try:
+            resolved_id, outcome = await resolve_candidate(candidate_for_dedup)
+        except Exception as e:
+            logger.error("deduplication_failed", url=url, error=str(e), exc_info=True)
+            return 0
         
         # Use the UUID candidate_id, not the MongoDB _id
         # Transform to MongoDB schema with all required fields
         candidate = transform_candidate_to_schema(
             parsed_candidate,
             candidate_id=candidate_id,
-            hash_value=hash_identity,
+            hash_value=resume_hash,
             org_id=org_id,
         )
         
@@ -192,6 +232,38 @@ async def _process_profile(driver, url: str, org_id: str) -> int:
         return 0
 
 
+async def _create_source_run_record(
+    source_run_id: uuid.UUID,
+    config_id: uuid.UUID,
+    run_start_time: datetime,
+) -> None:
+    """Create a source run record with in_progress status when sourcing starts."""
+    try:
+        # Ensure time is in IST timezone
+        ist_start_time = run_start_time if run_start_time.tzinfo else _get_ist_time(run_start_time)
+        source_run_data = {
+            "source_run_id": str(source_run_id),
+            "platform_id": LINKEDIN_PLATFORM_ID,
+            "status": "in_progress",
+            "config_id": str(config_id),
+            "run_at": ist_start_time.isoformat(),
+        }
+        
+        await send_source_run_report(source_run_data)
+        logger.info(
+            "source_run_record_created",
+            source_run_id=str(source_run_id),
+            status="in_progress",
+        )
+    except Exception as e:
+        logger.error(
+            "failed_to_create_source_run_record",
+            source_run_id=str(source_run_id),
+            error=str(e),
+        )
+        raise
+
+
 async def _report_source_run(
     source_run_id: uuid.UUID,
     config_id: uuid.UUID,
@@ -199,29 +271,31 @@ async def _report_source_run(
     profiles_fetched: int,
     run_start_time: datetime,
 ) -> None:
-    """Send source run completion report to core service."""
+    """Update source run record with completion status and profile count."""
     try:
-        run_end_time = datetime.now(timezone.utc)
+        # Ensure times are in IST timezone
+        ist_start_time = run_start_time if run_start_time.tzinfo else _get_ist_time(run_start_time)
+        ist_end_time = _get_ist_time()
         source_run_data = {
             "source_run_id": str(source_run_id),
             "platform_id": LINKEDIN_PLATFORM_ID,
             "status": status,
             "number_of_resume_fetched": profiles_fetched,
             "config_id": str(config_id),
-            "run_at": run_start_time.isoformat(),
-            "completed_at": run_end_time.isoformat(),
+            "run_at": ist_start_time.isoformat(),
+            "completed_at": ist_end_time.isoformat(),
         }
         
         await send_source_run_report(source_run_data)
         logger.info(
-            "source_run_reported",
+            "source_run_updated",
             source_run_id=str(source_run_id),
             status=status,
             profiles_fetched=profiles_fetched,
         )
     except Exception as e:
         logger.error(
-            "failed_to_report_source_run",
+            "failed_to_update_source_run",
             source_run_id=str(source_run_id),
             error=str(e),
         )

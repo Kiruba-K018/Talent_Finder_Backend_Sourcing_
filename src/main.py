@@ -1,7 +1,6 @@
 import asyncio
 import uvicorn
 from src.api.rest.app import create_app
-from src.core.services import scheduler
 from src.config.settings import get_settings
 from src.core.services.scheduler import run_scheduler_loop
 

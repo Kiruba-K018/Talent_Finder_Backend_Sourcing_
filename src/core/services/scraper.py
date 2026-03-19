@@ -127,7 +127,7 @@ def inject_session_cookie(driver: uc.Chrome, cookie_value: str, retries: int = 3
                             logger.debug(f"Waiting {wait_time}s before retry...")
                             time.sleep(wait_time)
                         continue
-                except:
+                except Exception as e:
                     if attempt < retries - 1:
                         wait_time = 2 ** attempt
                         logger.debug(f"Waiting {wait_time}s before retry...")
@@ -141,7 +141,8 @@ def inject_session_cookie(driver: uc.Chrome, cookie_value: str, retries: int = 3
                 if "feed" in driver.current_url or "mynetwork" in driver.current_url:
                     logger.info("Already logged in! Cookie is valid.")
                     return True
-            except:
+            except Exception as e:
+                logger.debug(f"Error occurred while checking login status: {e}")
                 pass
             
             # Add the session cookie
@@ -180,7 +181,7 @@ def inject_session_cookie(driver: uc.Chrome, cookie_value: str, retries: int = 3
                 else:
                     logger.info(f"Cookie injected (URL: {current_url})")
                     return True
-            except:
+            except Exception:
                 logger.warning("Could not verify authentication status - assuming cookie was injected")
                 return True
                 
@@ -244,7 +245,7 @@ def login_to_linkedin(driver: uc.Chrome, email: str, password: str) -> bool:
                 email_field.send_keys(email)
                 time.sleep(1)
                 logger.info("Email entered via alternate selector")
-            except:
+            except Exception:
                 logger.error("Could not find email field with any selector")
                 return False
         
@@ -265,7 +266,7 @@ def login_to_linkedin(driver: uc.Chrome, email: str, password: str) -> bool:
                 password_field.send_keys(password)
                 time.sleep(1)
                 logger.info("Password entered via alternate selector")
-            except:
+            except Exception:
                 logger.error("Could not find password field")
                 return False
         
@@ -275,7 +276,7 @@ def login_to_linkedin(driver: uc.Chrome, email: str, password: str) -> bool:
             submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
             submit_btn.click()
             logger.info("Login form submitted")
-        except:
+        except Exception:
             # Try form submission via Enter key
             password_field.submit()
             logger.info("Form submitted via Enter key")
@@ -428,7 +429,7 @@ def _wait_for_profile_content(driver: uc.Chrome, timeout: int = 15) -> bool:
                     # Use Selenium WebElement.text, not get_text() from BeautifulSoup
                     if len(item.text.strip()) > 20:
                         return True
-                except:
+                except Exception:
                     continue
             return False
         
@@ -662,26 +663,26 @@ def search_profiles(driver: uc.Chrome, query: str, max_results: int, location: s
         
         # Wait for dynamic content - LinkedIn renders results via JavaScript
         logger.info("Waiting for search results to render...")
-        elements_found = False
+        
         try:
-            wait = WebDriverWait(driver, 20)
+            wait = WebDriverWait(driver, 90)
             # Try waiting for profile cards first
             wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, 'div[data-chameleon-result-urn*="urn:li:member"]')))
             logger.info("Profile card elements found")
-            elements_found = True
+            
         except TimeoutException:
             logger.debug("Profile cards not found with data-chameleon-result-urn selector - trying alternatives...")
             try:
                 # Alternative: Wait for search results container
                 wait.until(EC.presence_of_element_located((By.CLASS_NAME, "search-results-container")))
                 logger.debug("Search results container found - will parse page")
-                elements_found = True
+                
             except TimeoutException:
                 logger.debug("Search results container not found - trying to load any search-related content...")
                 try:
                     wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/in/']")))
                     logger.debug("Profile links found in page")
-                    elements_found = True
+                    
                 except TimeoutException:
                     logger.warning("Timeout waiting for any search results - page may not have loaded")
         
@@ -698,8 +699,6 @@ def search_profiles(driver: uc.Chrome, query: str, max_results: int, location: s
         # Strategy 1: Parse HTML with BeautifulSoup
         soup = BeautifulSoup(driver.page_source, "lxml")
         logger.debug(f"Page source length: {len(driver.page_source)} characters")
-        
-        profile_count = 0
         
         # Try multiple extraction strategies with priority order
         extraction_strategies = [
@@ -759,8 +758,9 @@ def search_profiles(driver: uc.Chrome, query: str, max_results: int, location: s
                     # Also check for generic profile links
                     all_profile_links = soup.find_all("a", href=lambda x: x and "/in/" in x)
                     logger.debug(f"Profile links found: {len(all_profile_links)}")
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Error during debug extraction: {str(e)}")
+                    
         
         return links
         

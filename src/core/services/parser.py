@@ -705,6 +705,5 @@ def parse_profile(html: str, profile_url: str) -> dict:
         "education":       education,
         "certifications":  certifications,
         "projects":        projects,
-        "profile_url":     profile_url,
-        "source_platform": "linkedin",
+        "profile_url":     profile_url
     }

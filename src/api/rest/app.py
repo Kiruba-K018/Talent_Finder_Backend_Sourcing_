@@ -11,12 +11,40 @@ from src.data.clients.postgres_client import dispose_engine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    configure_logging()
-    configure_tracing()
-    start_metrics_server()
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("Configuring logging...")
+        configure_logging()
+    except Exception as e:
+        logger.warning(f"Failed to configure logging: {e}")
+    
+    try:
+        logger.info("Configuring tracing...")
+        configure_tracing()
+    except Exception as e:
+        logger.warning(f"Failed to configure tracing: {e}")
+    
+    try:
+        logger.info("Starting metrics server...")
+        start_metrics_server()
+    except Exception as e:
+        logger.warning(f"Failed to start metrics server: {e}")
+    
     yield
-    await close_mongo_client()
-    await dispose_engine()
+    
+    try:
+        logger.info("Closing mongo client...")
+        await close_mongo_client()
+    except Exception as e:
+        logger.warning(f"Failed to close mongo client: {e}")
+    
+    try:
+        logger.info("Disposing database engine...")
+        await dispose_engine()
+    except Exception as e:
+        logger.warning(f"Failed to dispose engine: {e}")
 
 
 def create_app() -> FastAPI:

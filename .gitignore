@@ -8,8 +8,12 @@ __pycache__/
 
 src/core/services/parser_backup.py
 src/core/services/parser_old.py
+src/core/services/postjobfree_pipeline.py
+src/core/services/postjobfree_parser.py
+src/core/services/postjobfree_llm_formatter.py
+src/core/services/postjobfree_scraper.py
 
-
+deploy.sh
 
 # Distribution / packaging
 .Python

@@ -6,7 +6,6 @@ Adds UUIDs, timestamps, and required fields to match the data model.
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, Any, List
-from src.utils.hashing import compute_identity_hash, compute_profile_hash
 from src.observability.logging.logger import get_logger
 
 logger = get_logger(__name__)
@@ -51,14 +50,9 @@ def transform_candidate_to_schema(
     platform_id = str(uuid.uuid4())
     source_run_id = str(uuid.uuid4())
     
-    # Compute hash if not provided
+    # Use provided hash_value or generate a default one
     if not hash_value:
-        hash_value = compute_identity_hash(
-            parsed_candidate.get("name", ""),
-            parsed_candidate.get("email", ""),
-            parsed_candidate.get("location", ""),
-            profile_url=parsed_candidate.get("profile_url", ""),
-        )
+        hash_value = ""
     
     # Transform experience array with experience_id
     experience = []

@@ -3,20 +3,22 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import text
 from src.data.clients.postgres_client import get_session_factory
 
-# IST = UTC+5:30 (Indian Standard Time)
-IST = timezone(timedelta(hours=5, minutes=30))
+from src.core.services.postfreejob import run_postjobfree_sourcing_pipeline
+from src.config.settings import get_settings
+from src.observability.logging.logger import get_logger
+from src.observability.metrics.prometheus import scrape_jobs_total, scrape_failures_total
 from src.data.repositories.sourcing_config_repo import (
     fetch_due_configs,
     update_run_timestamps,
 )
-from src.core.services.pipeline import run_sourcing_pipeline
-from src.config.settings import get_settings
-from src.observability.logging.logger import get_logger
-from src.observability.metrics.prometheus import scrape_jobs_total, scrape_failures_total
 
 logger = get_logger(__name__)
 settings = get_settings()
 
+
+
+# IST = UTC+5:30 (Indian Standard Time)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 def _compute_next_run(frequency: str, scheduled_time, scheduled_day: str) -> datetime:
     """Compute next run time in IST timezone."""
@@ -86,9 +88,15 @@ async def _tick() -> None:
 
         for config in configs:
             org_id = str(config.org_id)
+           
             try:
                 scrape_jobs_total.labels(org_id=org_id, status="started").inc()
-                await run_sourcing_pipeline(config)
+                
+                # Route to appropriate pipeline based on source_platform
+            
+                logger.info("routing_to_postjobfree_pipeline", org_id=org_id, config_id=str(config.id))
+                await run_postjobfree_sourcing_pipeline(config)
+                
                 scrape_jobs_total.labels(org_id=org_id, status="completed").inc()
 
                 next_run = _compute_next_run(

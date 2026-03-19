@@ -19,6 +19,9 @@ INTERNAL_SOURCE_RUNS_PATH = "api/v1/source-runs/"
 # LinkedIn Platform ID (constant for all scraping operations)
 LINKEDIN_PLATFORM_ID = "11000015-0000-0000-0000-000000000001"
 
+# PostJobFree Platform ID (constant for all scraping operations)
+POSTJOBFREE_PLATFORM_ID = "22000015-0000-0000-0000-000000000001"
+
 # Chroma
 CHROMA_COLLECTION_NAME   = "candidate_skills_embeddings"
 

@@ -4,6 +4,7 @@ pydantic-settings
 fastapi
 uvicorn
 asyncpg
+psycopg[binary]
 sqlalchemy[asyncio]
 motor
 pymongo
@@ -28,3 +29,5 @@ langchain-groq
 python-dotenv
 python-dateutil
 pytz
+playwright
+requests

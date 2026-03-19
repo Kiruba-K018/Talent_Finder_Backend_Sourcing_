@@ -2,7 +2,6 @@
 
 import json
 import re
-from typing import Any, Optional
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 from src.observability.logging.logger import get_logger
@@ -216,7 +215,7 @@ CRITICAL INSTRUCTIONS:
 }}""")
         
         # Call LLM
-        logger.debug(f"Calling LLM to format and clean candidate data")
+        logger.debug("Calling LLM to format and clean candidate data")
         response = llm.invoke([system_prompt, user_prompt])
         
         # Parse response
@@ -410,7 +409,7 @@ def _clean_text(text: str) -> str:
         "responsible", "skilled", "able", "capable", "experienced",
     ]
     
-    text_lower = text.lower()
+    
     for buzzword in buzzwords:
         # Replace buzzword with empty string (case-insensitive)
         text = re.sub(rf'\b{buzzword}\b', '', text, flags=re.IGNORECASE)

@@ -57,3 +57,43 @@ async def send_source_run_report(source_run: dict) -> dict:
             count=source_run.get("number_of_resume_fetched"),
         )
         return response.json()
+
+
+async def mark_source_run_failed(source_run_id: str, error_message: str, error_code: str = "UNKNOWN") -> None:
+    """
+    Mark a source run as FAILED in the Core API.
+    
+    Used when sourcing fails before any candidates can be processed.
+    
+    Args:
+        source_run_id: UUID of the source run
+        error_message: Error message describing the failure
+        error_code: Error code for categorization
+    """
+    try:
+        failure_report = {
+            "source_run_id": source_run_id,
+            "status": "FAILED",
+            "error_code": error_code,
+            "error_message": error_message,
+            "number_of_resume_fetched": 0,
+            "number_of_resume_updated": 0,
+            "number_of_resume_skipped": 0,
+            "number_of_errors": 1,
+        }
+        
+        async with _build_client() as client:
+            response = await client.post(INTERNAL_SOURCE_RUNS_PATH, json=failure_report)
+            response.raise_for_status()
+            logger.info(
+                "source_run_marked_failed",
+                status=response.status_code,
+                source_run_id=source_run_id,
+                error_code=error_code,
+            )
+    except Exception as e:
+        logger.error(
+            "failed_to_mark_source_run_failed",
+            source_run_id=source_run_id,
+            error=str(e),
+        )
