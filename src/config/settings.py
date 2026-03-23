@@ -1,10 +1,21 @@
 from functools import lru_cache
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _get_env_file() -> str:
+    """Determine which .env file to load based on APP_ENV variable."""
+    import os
+    app_env = os.getenv("APP_ENV", "development")
+    
+    if app_env.lower() == "local":
+        return ".env.local"
+    return ".env"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_get_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",  # Ignore extra fields from .env that don't match

@@ -14,6 +14,7 @@ src/core/services/postjobfree_llm_formatter.py
 src/core/services/postjobfree_scraper.py
 
 deploy.sh
+.env.local
 
 # Distribution / packaging
 .Python
