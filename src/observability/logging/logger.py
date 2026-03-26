@@ -1,4 +1,5 @@
 import structlog
+
 from src.config.settings import get_settings
 
 

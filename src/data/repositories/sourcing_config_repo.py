@@ -1,7 +1,9 @@
 from datetime import datetime
 from uuid import UUID
+
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.data.models.postgres.sourcing_config import SourcingConfig
 
 
@@ -12,7 +14,9 @@ async def fetch_active_configs(session: AsyncSession) -> list[SourcingConfig]:
     return list(result.scalars().all())
 
 
-async def fetch_due_configs(session: AsyncSession, now: datetime) -> list[SourcingConfig]:
+async def fetch_due_configs(
+    session: AsyncSession, now: datetime
+) -> list[SourcingConfig]:
     """Return configs whose next_run_at is due."""
     result = await session.execute(
         select(SourcingConfig).where(
@@ -37,9 +41,9 @@ async def update_run_timestamps(
     await session.commit()
 
 
-
-
-async def fetch_config_by_id(session: AsyncSession, config_id: UUID) -> SourcingConfig | None:
+async def fetch_config_by_id(
+    session: AsyncSession, config_id: UUID
+) -> SourcingConfig | None:
     result = await session.execute(
         select(SourcingConfig).where(SourcingConfig.id == config_id)
     )

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import chromadb
 from chromadb import AsyncHttpClient, Collection
-from typing import Optional
+
 from src.config.settings import get_settings
 
 # use Optional to avoid union evaluation issues with chromadb types
-_client: Optional[AsyncHttpClient] = None
+_client: AsyncHttpClient | None = None
 
 
 async def get_chroma_client() -> chromadb.AsyncHttpClient:

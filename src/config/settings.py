@@ -1,13 +1,14 @@
 from functools import lru_cache
-from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _get_env_file() -> str:
     """Determine which .env file to load based on APP_ENV variable."""
     import os
+
     app_env = os.getenv("APP_ENV", "development")
-    
+
     if app_env.lower() == "local":
         return ".env.local"
     return ".env"
@@ -34,15 +35,18 @@ class Settings(BaseSettings):
     db_name: str = "talentfinder"
     db_user: str = "devakirubak"
     db_password: str = "Z7jX6#l5yyNu2sUOBg7"
-    postgres_pool_size: int = 2           # Reduced from 10 for Cloud SQL
-    postgres_max_overflow: int = 1        # Reduced from 20 for Cloud SQL
+    postgres_pool_size: int = 2  # Reduced from 10 for Cloud SQL
+    postgres_max_overflow: int = 1  # Reduced from 20 for Cloud SQL
 
     @property
     def postgres_dsn(self) -> str:
         # Use DB_URL if provided (for Cloud Run with Cloud SQL proxy), otherwise construct
         if self.db_url:
             url = self.db_url
-            if "postgresql+psycopg://" not in url and "postgresql+asyncpg://" not in url:
+            if (
+                "postgresql+psycopg://" not in url
+                and "postgresql+asyncpg://" not in url
+            ):
                 # Ensure psycopg driver
                 if "postgresql://" in url:
                     url = url.replace("postgresql://", "postgresql+psycopg://")
@@ -51,6 +55,7 @@ class Settings(BaseSettings):
             return url
         # Fallback to constructed URL using psycopg async driver
         from urllib.parse import quote
+
         encoded_password = quote(self.postgres_password, safe="")
         return f"postgresql+psycopg://{self.postgres_user}:{encoded_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
@@ -63,7 +68,7 @@ class Settings(BaseSettings):
     mongo_authsource: str = "admin"
     mongo_candidates_collection: str = "sourced_candidates"
     atlas_connection_string: str = "mongodb+srv://devakirubak:Kiruba@1809@talentfinder-cluster.0omhk3c.mongodb.net/talentfindeR"  # For MongoDB Atlas
-    
+
     @property
     def mongo_uri(self) -> str:
         if self.atlas_connection_string:
@@ -79,7 +84,9 @@ class Settings(BaseSettings):
     chroma_collection: str = "candidate_skills"
 
     # Core Service
-    core_service_url: str = "https://talentfinder-backend-core-717740758627.us-east1.run.app"
+    core_service_url: str = (
+        "https://talentfinder-backend-core-717740758627.us-east1.run.app"
+    )
     core_service_timeout: int = 30
     core_service_max_retries: int = 3
 
@@ -88,6 +95,7 @@ class Settings(BaseSettings):
 
     groq_api_key: str = ""
     groq_api_key_secondary: str = ""
+    groq_api_key_tertiary: str = ""
 
     # Scraping
     chrome_bin: str = "/usr/bin/chromium"

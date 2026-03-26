@@ -1,17 +1,34 @@
 from fastapi import APIRouter
+
 from src.data.clients.mongo_client import get_mongo_client
 from src.data.clients.postgres_client import get_engine
+from src.schema.sourcing_schema import HealthCheckResponse, HealthReadinessResponse
 
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
-async def health_check():
-    return {"status": "ok", "service": "talent_finder_backend_sourcing"}
+@router.get("/health", response_model=HealthCheckResponse)
+async def health_check() -> HealthCheckResponse:
+    """Check service health status.
+
+    Returns basic service liveness status without dependency checks.
+
+    Returns:
+        HealthCheckResponse: Service status (ok).
+    """
+    return HealthCheckResponse(status="ok", service="talent_finder_backend_sourcing")
 
 
-@router.get("/health/ready")
-async def readiness():
+@router.get("/health/ready", response_model=HealthReadinessResponse)
+async def readiness() -> HealthReadinessResponse:
+    """Check service readiness with dependency status.
+
+    Performs health checks on MongoDB and PostgreSQL connections to verify service readiness.
+    Returns degraded status if any dependency is unavailable.
+
+    Returns:
+        HealthReadinessResponse: Status (ok/degraded) with per-dependency checks.
+    """
     checks = {}
     try:
         client = get_mongo_client()
@@ -29,4 +46,4 @@ async def readiness():
         checks["postgres"] = str(e)
 
     status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
-    return {"status": status, "checks": checks}
+    return HealthReadinessResponse(status=status, checks=checks)

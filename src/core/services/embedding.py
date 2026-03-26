@@ -1,8 +1,9 @@
 from sentence_transformers import SentenceTransformer
-from src.data.clients.chroma_client import get_or_create_collection
+
 from src.config.settings import get_settings
-from src.observability.logging.logger import get_logger
 from src.constants import CHROMA_COLLECTION_NAME
+from src.data.clients.chroma_client import get_or_create_collection
+from src.observability.logging.logger import get_logger
 
 logger = get_logger(__name__)
 _model: SentenceTransformer | None = None
@@ -22,12 +23,9 @@ def build_embedding_text(candidate: dict) -> str:
         " ".join(candidate.get("soft_skills", [])),
         candidate.get("summary", ""),
         " ".join(
-            " ".join(e.get("technologies", []))
-            for e in candidate.get("experience", [])
+            " ".join(e.get("technologies", [])) for e in candidate.get("experience", [])
         ),
-        " ".join(
-            str(p) for p in candidate.get("projects", [])
-        ),
+        " ".join(str(p) for p in candidate.get("projects", [])),
     ]
     return " ".join(filter(None, parts))
 
@@ -44,10 +42,12 @@ async def embed_and_store(candidate_id: str, candidate: dict) -> None:
     await collection.upsert(
         ids=[candidate_id],
         embeddings=[vector],
-        metadatas=[{
-            "name":     candidate.get("name", ""),
-            "location": candidate.get("location", ""),
-            "title":    candidate.get("title", ""),
-        }],
+        metadatas=[
+            {
+                "name": candidate.get("name", ""),
+                "location": candidate.get("location", ""),
+                "title": candidate.get("title", ""),
+            }
+        ],
     )
     logger.info("embedding_stored", candidate_id=candidate_id)

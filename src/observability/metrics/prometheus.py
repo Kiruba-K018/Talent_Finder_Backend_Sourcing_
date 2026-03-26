@@ -1,4 +1,5 @@
 from prometheus_client import Counter, Histogram, start_http_server
+
 from src.config.settings import get_settings
 
 scrape_jobs_total = Counter(
@@ -22,7 +23,7 @@ candidates_extracted_total = Counter(
 duplicates_detected_total = Counter(
     "duplicates_detected_total",
     "Total duplicate candidates detected",
-    ["outcome"],   # "update" | "skip"
+    ["outcome"],  # "update" | "skip"
 )
 
 pipeline_duration_seconds = Histogram(

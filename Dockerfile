@@ -41,6 +41,9 @@ COPY .env* ./
 # Expose port for FastAPI
 EXPOSE 8001 9001
 
+RUN useradd -m appuser 
+
+USER appuser
 
 # Run the application
 CMD ["python", "-m", "src.main"]

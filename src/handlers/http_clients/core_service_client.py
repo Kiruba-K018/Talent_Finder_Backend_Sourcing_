@@ -1,10 +1,11 @@
 import httpx
 from tenacity import (
     retry,
+    retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
-    retry_if_exception_type,
 )
+
 from src.config.settings import get_settings
 from src.constants import INTERNAL_CANDIDATES_PATH, INTERNAL_SOURCE_RUNS_PATH
 from src.observability.logging.logger import get_logger
@@ -59,12 +60,14 @@ async def send_source_run_report(source_run: dict) -> dict:
         return response.json()
 
 
-async def mark_source_run_failed(source_run_id: str, error_message: str, error_code: str = "UNKNOWN") -> None:
+async def mark_source_run_failed(
+    source_run_id: str, error_message: str, error_code: str = "UNKNOWN"
+) -> None:
     """
     Mark a source run as FAILED in the Core API.
-    
+
     Used when sourcing fails before any candidates can be processed.
-    
+
     Args:
         source_run_id: UUID of the source run
         error_message: Error message describing the failure
@@ -81,7 +84,7 @@ async def mark_source_run_failed(source_run_id: str, error_message: str, error_c
             "number_of_resume_skipped": 0,
             "number_of_errors": 1,
         }
-        
+
         async with _build_client() as client:
             response = await client.post(INTERNAL_SOURCE_RUNS_PATH, json=failure_report)
             response.raise_for_status()

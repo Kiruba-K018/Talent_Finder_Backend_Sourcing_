@@ -2,28 +2,33 @@
 
 import hashlib
 import uuid
-from datetime import datetime, timezone, timedelta
-from src.core.services.postfreejob.scraper import (
-    search_postjobfree,
-    scrape_resume_page,
-    close_browser,
-)
-from src.core.services.postfreejob.parser import parse_postjobfree_resume
-from src.core.services.postfreejob.llm_formatter import (
-    format_postjobfree_resume_with_llm,
+from datetime import UTC, datetime, timedelta, timezone
+
+from src.config.settings import get_settings
+from src.constants import (
+    OUTCOME_INSERT,
+    OUTCOME_SKIP,
+    OUTCOME_UPDATE,
+    POSTJOBFREE_PLATFORM_ID,
 )
 from src.core.services.deduplication import resolve_candidate
 from src.core.services.embedding import embed_and_store
+from src.core.services.postfreejob.llm_formatter import (
+    format_postjobfree_resume_with_llm,
+)
+from src.core.services.postfreejob.parser import parse_postjobfree_resume
+from src.core.services.postfreejob.scraper import (
+    close_browser,
+    scrape_resume_page,
+    search_postjobfree,
+)
 from src.handlers.http_clients.core_service_client import (
+    mark_source_run_failed,
     send_candidate_to_core,
     send_source_run_report,
-    mark_source_run_failed,
 )
-from src.utils.hashing import compute_identity_hash, compute_profile_hash
-from src.config.settings import get_settings
 from src.observability.logging.logger import get_logger
-
-from src.constants import OUTCOME_SKIP, OUTCOME_INSERT, OUTCOME_UPDATE, POSTJOBFREE_PLATFORM_ID
+from src.utils.hashing import compute_identity_hash, compute_profile_hash
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -35,7 +40,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 def _get_ist_time(utc_time: datetime = None) -> datetime:
     """Convert UTC time to IST timezone."""
     if utc_time is None:
-        return datetime.now(timezone.utc).astimezone(IST)
+        return datetime.now(UTC).astimezone(IST)
     return utc_time.astimezone(IST)
 
 
@@ -47,7 +52,7 @@ def _compute_resume_hash(raw_text: str) -> str:
 async def run_postjobfree_sourcing_pipeline(config) -> None:
     """
     Main PostJobFree sourcing pipeline.
-    
+
     Flow:
     1. Create source run record with status in_progress
     2. Search PostJobFree using SerpAPI
@@ -62,17 +67,21 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
     4. Update source run record with final stats
     """
     org_id = str(config.org_id)
-    
+
     # Build search query from config
     # search_skills is a list from database, convert to string
-    search_skills_list = config.search_skills if isinstance(config.search_skills, list) else config.search_skills.split()
+    search_skills_list = (
+        config.search_skills
+        if isinstance(config.search_skills, list)
+        else config.search_skills.split()
+    )
     job_title = search_skills_list[0] if search_skills_list else "developer"
     location = config.search_location or "India"
     query_skills = " ".join(search_skills_list) if search_skills_list else "developer"
-    
+
     source_run_id = uuid.uuid4()
     run_start_time = _get_ist_time()
-    
+
     # Initialize stats tracking
     stats = {
         "fetched": 0,
@@ -81,7 +90,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
         "errors": 0,
         "total_processed": 0,
     }
-    
+
     logger.info(
         "postjobfree_pipeline_start",
         org_id=org_id,
@@ -89,7 +98,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
         location=location,
         source_run_id=str(source_run_id),
     )
-    
+
     # Step 1: Create source run record
     try:
         await _create_source_run_record(
@@ -100,17 +109,23 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
     except Exception as e:
         logger.error("failed_to_create_source_run_record", error=str(e))
         raise
-    
+
     try:
         # Step 2: Search PostJobFree using SerpAPI
-        logger.info("step_2_searching_postjobfree", query=query_skills, location=location)
-        search_results, search_error = await search_postjobfree(str(query_skills), location)
-        
+        logger.info(
+            "step_2_searching_postjobfree", query=query_skills, location=location
+        )
+        search_results, search_error = await search_postjobfree(
+            str(query_skills), location
+        )
+
         # Handle search errors (400, validation errors, etc.)
         if search_error:
-            error_code = search_error.get("error_code", search_error.get("error", "UNKNOWN"))
+            error_code = search_error.get(
+                "error_code", search_error.get("error", "UNKNOWN")
+            )
             error_message = search_error.get("error_message", str(search_error))
-            
+
             logger.error(
                 "postjobfree_search_failed",
                 error_code=error_code,
@@ -118,7 +133,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                 query=query_skills,
                 location=location,
             )
-            
+
             # Mark source run as FAILED in Core API
             try:
                 await mark_source_run_failed(
@@ -132,9 +147,9 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     source_run_id=str(source_run_id),
                     error=str(e),
                 )
-            
+
             return
-        
+
         if not search_results:
             logger.warning("no_results_from_postjobfree_search", query=query_skills)
             await _report_source_run(
@@ -145,34 +160,34 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                 run_start_time=run_start_time,
             )
             return
-        
+
         logger.info("postjobfree_search_results_received", count=len(search_results))
-        
+
         # Step 3: Extract and process resume URLs
         max_profiles = settings.postjobfree_max_profiles
-        
+
         # Extract all valid resume URLs upfront from search results
         resume_urls = []
         for result in search_results:
             resume_url = result.get("link")
             if resume_url:
                 resume_urls.append(resume_url)
-        
+
         # Limit to max_profiles
         resume_urls = resume_urls[:max_profiles]
-        
+
         logger.info(
             "extracted_resume_urls",
             total_urls=len(resume_urls),
             max_profiles=max_profiles,
         )
-        
+
         # Process each resume URL one by one asynchronously
         processed_count = 0
-        
+
         for profile_index, resume_url in enumerate(resume_urls, start=1):
             total_profiles = len(resume_urls)
-            
+
             try:
                 # Log progress
                 logger.info(
@@ -181,7 +196,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     total_profiles=total_profiles,
                     url=resume_url,
                 )
-                
+
                 # Step 3a: Scrape individual resume page asynchronously
                 logger.debug(
                     "scraping_resume",
@@ -189,7 +204,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     url=resume_url,
                 )
                 scraped_data = await scrape_resume_page(resume_url)
-                
+
                 if not scraped_data:
                     logger.warning(
                         "failed_to_scrape_resume",
@@ -199,14 +214,14 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     stats["errors"] += 1
                     processed_count += 1
                     continue
-                
+
                 # Handle both dict and string returns for backward compatibility
                 if isinstance(scraped_data, dict):
                     raw_text = scraped_data.get("text")
                 else:
                     # Legacy: string return value
                     raw_text = scraped_data
-                
+
                 if not raw_text:
                     logger.warning(
                         "no_resume_content_found",
@@ -216,7 +231,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     stats["errors"] += 1
                     processed_count += 1
                     continue
-                
+
                 # Step 3b & 3c: Parse and format resume using text-based parsing
                 logger.debug(
                     "parsing_resume",
@@ -224,19 +239,21 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     url=resume_url,
                     text_length=len(raw_text) if raw_text else 0,
                 )
-                
+
                 # Use text-based parsing since we have reliable text extraction
                 # (HTML parsing requires specific div wrapper structure that may vary)
                 parsed_candidate = parse_postjobfree_resume(raw_text)
                 candidate_name = parsed_candidate.get("candidate_name") or "Unknown"
-                
+
                 logger.debug(
                     "formatting_with_llm",
                     profile_number=profile_index,
                     candidate=candidate_name,
                 )
-                formatted_candidate = format_postjobfree_resume_with_llm(parsed_candidate)
-                
+                formatted_candidate = format_postjobfree_resume_with_llm(
+                    parsed_candidate
+                )
+
                 # Note: Continue processing even if candidate_name is missing
                 # Core API can match on email, location, skills, or other attributes
                 if not formatted_candidate:
@@ -248,7 +265,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     stats["errors"] += 1
                     processed_count += 1
                     continue
-                
+
                 # Step 3d: Compute hashes
                 resume_hash = _compute_resume_hash(raw_text)
                 identity_hash = compute_identity_hash(
@@ -263,14 +280,14 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     formatted_candidate.get("experience", []),
                     [],  # certifications
                 )
-                
+
                 # Step 3e: Add metadata to candidate
                 candidate_id = str(uuid.uuid4())
                 resume_id = str(uuid.uuid4())
                 platform_id = POSTJOBFREE_PLATFORM_ID
-                
-                now_iso = datetime.now(timezone.utc).isoformat()
-                
+
+                now_iso = datetime.now(UTC).isoformat()
+
                 # Prepare document for MongoDB
                 document = {
                     "_id": str(uuid.uuid4()).replace("-", "")[:24],
@@ -297,7 +314,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                         "education": formatted_candidate.get("education", []),
                     },
                 }
-                
+
                 # Step 3f: Deduplicate
                 candidate_name = formatted_candidate.get("candidate_name", "Unknown")
                 logger.debug(
@@ -306,7 +323,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     candidate=candidate_name,
                 )
                 mongodb_id, outcome = await resolve_candidate(document)
-                
+
                 # Update stats
                 dedup_outcome = "unknown"
                 if outcome == OUTCOME_INSERT:
@@ -318,9 +335,9 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                 elif outcome == OUTCOME_SKIP:
                     stats["skipped"] += 1
                     dedup_outcome = "skip"
-                
+
                 stats["total_processed"] += 1
-                
+
                 # Step 3g: Embed skills in Chroma
                 if outcome != OUTCOME_SKIP:
                     logger.debug(
@@ -338,7 +355,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                             candidate_id=mongodb_id,
                             error=str(e),
                         )
-                
+
                 # Step 3h: Send to core API
                 if outcome != OUTCOME_SKIP:
                     logger.debug(
@@ -356,7 +373,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                             candidate_id=mongodb_id,
                             error=str(e),
                         )
-                
+
                 # Log completion of this profile
                 logger.info(
                     "resume_profile_completed",
@@ -365,9 +382,9 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                     candidate=candidate_name,
                     outcome=dedup_outcome,
                 )
-                
+
                 processed_count += 1
-                
+
             except Exception as e:
                 logger.error(
                     "error_processing_resume",
@@ -377,7 +394,7 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
                 )
                 stats["errors"] += 1
                 processed_count += 1
-        
+
         logger.info(
             "postjobfree_pipeline_completed",
             total_processed=stats["total_processed"],
@@ -386,11 +403,11 @@ async def run_postjobfree_sourcing_pipeline(config) -> None:
             skipped=stats["skipped"],
             errors=stats["errors"],
         )
-        
+
     finally:
         # Close browser
         await close_browser()
-        
+
         # Step 4: Update source run record with final status
         try:
             await _report_source_run(
@@ -429,7 +446,7 @@ async def _report_source_run(
 ) -> None:
     """Report final source run status to core service."""
     run_end_time = _get_ist_time()
-    
+
     # Build report with exact field names expected by Core API
     source_run_report = {
         "source_run_id": str(source_run_id),
@@ -440,14 +457,14 @@ async def _report_source_run(
         "run_at": run_start_time.isoformat(),
         "completed_at": run_end_time.isoformat(),
     }
-    
+
     logger.info(
         "sending_source_run_report",
         source_run_id=str(source_run_id),
         stats=stats,
         report=source_run_report,
     )
-    
+
     try:
         await send_source_run_report(source_run_report)
     except Exception as e:

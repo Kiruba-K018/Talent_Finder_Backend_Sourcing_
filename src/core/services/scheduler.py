@@ -1,24 +1,28 @@
 import asyncio
-from datetime import datetime, timezone, timedelta
-from sqlalchemy import text
-from src.data.clients.postgres_client import get_session_factory
+from datetime import datetime, timedelta, timezone
 
-from src.core.services.postfreejob import run_postjobfree_sourcing_pipeline
+from sqlalchemy import text
+
 from src.config.settings import get_settings
-from src.observability.logging.logger import get_logger
-from src.observability.metrics.prometheus import scrape_jobs_total, scrape_failures_total
+from src.core.services.postfreejob import run_postjobfree_sourcing_pipeline
+from src.data.clients.postgres_client import get_session_factory
 from src.data.repositories.sourcing_config_repo import (
     fetch_due_configs,
     update_run_timestamps,
+)
+from src.observability.logging.logger import get_logger
+from src.observability.metrics.prometheus import (
+    scrape_failures_total,
+    scrape_jobs_total,
 )
 
 logger = get_logger(__name__)
 settings = get_settings()
 
 
-
 # IST = UTC+5:30 (Indian Standard Time)
 IST = timezone(timedelta(hours=5, minutes=30))
+
 
 def _compute_next_run(frequency: str, scheduled_time, scheduled_day: str) -> datetime:
     """Compute next run time in IST timezone."""
@@ -52,10 +56,15 @@ async def _wait_for_db(max_retries: int = 30) -> None:
             logger.info("database_ready", attempt=attempt)
             return
         except Exception as exc:
-            wait_time = min(2 ** attempt, 10)
-            logger.warning("database_not_ready", attempt=attempt, wait_seconds=wait_time, error=str(exc))
+            wait_time = min(2**attempt, 10)
+            logger.warning(
+                "database_not_ready",
+                attempt=attempt,
+                wait_seconds=wait_time,
+                error=str(exc),
+            )
             await asyncio.sleep(wait_time)
-    
+
     logger.error("database_connection_failed", max_retries=max_retries)
     raise Exception("Could not connect to database after retries")
 
@@ -88,15 +97,19 @@ async def _tick() -> None:
 
         for config in configs:
             org_id = str(config.org_id)
-           
+
             try:
                 scrape_jobs_total.labels(org_id=org_id, status="started").inc()
-                
+
                 # Route to appropriate pipeline based on source_platform
-            
-                logger.info("routing_to_postjobfree_pipeline", org_id=org_id, config_id=str(config.id))
+
+                logger.info(
+                    "routing_to_postjobfree_pipeline",
+                    org_id=org_id,
+                    config_id=str(config.id),
+                )
                 await run_postjobfree_sourcing_pipeline(config)
-                
+
                 scrape_jobs_total.labels(org_id=org_id, status="completed").inc()
 
                 next_run = _compute_next_run(
@@ -107,7 +120,9 @@ async def _tick() -> None:
                 await update_run_timestamps(session, config.id, now, next_run)
 
             except Exception as exc:
-                scrape_failures_total.labels(org_id=org_id, reason=type(exc).__name__).inc()
+                scrape_failures_total.labels(
+                    org_id=org_id, reason=type(exc).__name__
+                ).inc()
                 logger.error(
                     "pipeline_error",
                     org_id=org_id,

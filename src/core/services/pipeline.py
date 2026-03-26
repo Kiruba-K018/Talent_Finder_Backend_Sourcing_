@@ -1,19 +1,27 @@
-import uuid
-from datetime import datetime, timezone, timedelta
-from src.core.services.scraper import search_profiles, fetch_profile_html, get_authenticated_driver
-from src.core.services.parser import parse_profile
-from src.core.services.llm import format_candidate_with_llm
-from src.core.services.deduplication import resolve_candidate
-from src.core.services.embedding import embed_and_store
-from src.core.services.candidate_transformer import transform_candidate_to_schema
-from src.handlers.http_clients.core_service_client import send_candidate_to_core, send_source_run_report
-from src.utils.query_builder import build_google_search_query
 import hashlib
 import json
+import uuid
+from datetime import UTC, datetime, timedelta, timezone
+
 from src.config.settings import get_settings
+from src.constants import LINKEDIN_PLATFORM_ID, OUTCOME_SKIP
+from src.core.services.candidate_transformer import transform_candidate_to_schema
+from src.core.services.deduplication import resolve_candidate
+from src.core.services.embedding import embed_and_store
+from src.core.services.llm import format_candidate_with_llm
+from src.core.services.parser import parse_profile
+from src.core.services.scraper import (
+    fetch_profile_html,
+    get_authenticated_driver,
+    search_profiles,
+)
+from src.handlers.http_clients.core_service_client import (
+    send_candidate_to_core,
+    send_source_run_report,
+)
 from src.observability.logging.logger import get_logger
 from src.observability.metrics.prometheus import candidates_extracted_total
-from src.constants import OUTCOME_SKIP, LINKEDIN_PLATFORM_ID
+from src.utils.query_builder import build_google_search_query
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -26,7 +34,7 @@ def _get_ist_time(utc_time: datetime = None) -> datetime:
     """Convert UTC time to IST timezone."""
     if utc_time is None:
         # Get current UTC time and convert to IST
-        return datetime.now(timezone.utc).astimezone(IST)
+        return datetime.now(UTC).astimezone(IST)
     return utc_time.astimezone(IST)
 
 
@@ -54,12 +62,14 @@ def _compute_resume_hash(parsed_candidate: dict) -> str:
 
 async def run_sourcing_pipeline(config) -> None:
     org_id = str(config.org_id)
-    query  = build_google_search_query(config.search_skills, config.search_location)
+    query = build_google_search_query(config.search_skills, config.search_location)
     source_run_id = uuid.uuid4()
     profiles_fetched = 0
     run_start_time = _get_ist_time()
 
-    logger.info("pipeline_start", org_id=org_id, query=query, source_run_id=str(source_run_id))
+    logger.info(
+        "pipeline_start", org_id=org_id, query=query, source_run_id=str(source_run_id)
+    )
 
     # Step 0: Create source run record with in_progress status
     try:
@@ -87,12 +97,13 @@ async def run_sourcing_pipeline(config) -> None:
             run_start_time=run_start_time,
         )
         raise
-    
+
     try:
         # Verify we're authenticated
         try:
             driver.get("https://www.linkedin.com/feed")
             import time
+
             time.sleep(2)
             if "login" in driver.current_url.lower():
                 logger.error("Authentication failed - not able to access LinkedIn feed")
@@ -114,12 +125,12 @@ async def run_sourcing_pipeline(config) -> None:
                 run_start_time=run_start_time,
             )
             raise
-        
+
         logger.info("Step 2: Successfully authenticated - proceeding with search")
-        
+
         # Step 3: Extract location from config
         location = config.search_location if config.search_location else "India"
-        
+
         # Step 4: Search directly on LinkedIn (now authenticated)
         logger.info("Step 3: Searching LinkedIn...")
         profile_urls = search_profiles(driver, query, config.max_profiles, location)
@@ -143,7 +154,12 @@ async def run_sourcing_pipeline(config) -> None:
         run_start_time=run_start_time,
     )
 
-    logger.info("pipeline_complete", org_id=org_id, source_run_id=str(source_run_id), profiles_fetched=profiles_fetched)
+    logger.info(
+        "pipeline_complete",
+        org_id=org_id,
+        source_run_id=str(source_run_id),
+        profiles_fetched=profiles_fetched,
+    )
 
 
 async def _process_profile(driver, url: str, org_id: str) -> int:
@@ -159,19 +175,34 @@ async def _process_profile(driver, url: str, org_id: str) -> int:
             return 0
 
         # Format candidate data with LLM for standardization and cleanup
-        logger.debug(f"Formatting candidate with LLM: {parsed_candidate.get('name', 'Unknown')}")
+        logger.debug(
+            f"Formatting candidate with LLM: {parsed_candidate.get('name', 'Unknown')}"
+        )
         try:
             formatted_candidate = format_candidate_with_llm(parsed_candidate)
             # Normalize keys: LLM returns different keys than parser
-            if "candidate_name" in formatted_candidate and "name" not in formatted_candidate:
+            if (
+                "candidate_name" in formatted_candidate
+                and "name" not in formatted_candidate
+            ):
                 formatted_candidate["name"] = formatted_candidate["candidate_name"]
-            if "candidate_email" in formatted_candidate and "email" not in formatted_candidate:
+            if (
+                "candidate_email" in formatted_candidate
+                and "email" not in formatted_candidate
+            ):
                 formatted_candidate["email"] = formatted_candidate["candidate_email"]
-            if "contact_phone" in formatted_candidate and "phone" not in formatted_candidate:
+            if (
+                "contact_phone" in formatted_candidate
+                and "phone" not in formatted_candidate
+            ):
                 formatted_candidate["phone"] = formatted_candidate["contact_phone"]
             # Preserve profile_url from original parse (LinkedIn URL is authoritative)
-            formatted_candidate["profile_url"] = parsed_candidate.get("profile_url", url)
-            formatted_candidate["source_platform"] = parsed_candidate.get("source_platform", "linkedin")
+            formatted_candidate["profile_url"] = parsed_candidate.get(
+                "profile_url", url
+            )
+            formatted_candidate["source_platform"] = parsed_candidate.get(
+                "source_platform", "linkedin"
+            )
             parsed_candidate = formatted_candidate
         except Exception as e:
             logger.warning(f"LLM formatting failed, using raw parsed data: {str(e)}")
@@ -183,10 +214,10 @@ async def _process_profile(driver, url: str, org_id: str) -> int:
         except Exception as e:
             logger.error("failed_to_generate_resume_hash", url=url, error=str(e))
             return 0
-        
+
         # Generate UUID candidate_id for external reference
         candidate_id = str(uuid.uuid4())
-        
+
         # Prepare candidate for deduplication
         # The hash field will be compared to detect if the same person has a different resume
         candidate_for_dedup = {
@@ -194,14 +225,14 @@ async def _process_profile(driver, url: str, org_id: str) -> int:
             "candidate_id": candidate_id,
             "hash": resume_hash,  # Resume content hash for deduplication
         }
-        
+
         # Resolve candidate (check for duplicates by name+title)
         try:
             resolved_id, outcome = await resolve_candidate(candidate_for_dedup)
         except Exception as e:
             logger.error("deduplication_failed", url=url, error=str(e), exc_info=True)
             return 0
-        
+
         # Use the UUID candidate_id, not the MongoDB _id
         # Transform to MongoDB schema with all required fields
         candidate = transform_candidate_to_schema(
@@ -210,7 +241,7 @@ async def _process_profile(driver, url: str, org_id: str) -> int:
             hash_value=resume_hash,
             org_id=org_id,
         )
-        
+
         candidates_extracted_total.labels(org_id=org_id).inc()
 
         if outcome != OUTCOME_SKIP:
@@ -240,7 +271,9 @@ async def _create_source_run_record(
     """Create a source run record with in_progress status when sourcing starts."""
     try:
         # Ensure time is in IST timezone
-        ist_start_time = run_start_time if run_start_time.tzinfo else _get_ist_time(run_start_time)
+        ist_start_time = (
+            run_start_time if run_start_time.tzinfo else _get_ist_time(run_start_time)
+        )
         source_run_data = {
             "source_run_id": str(source_run_id),
             "platform_id": LINKEDIN_PLATFORM_ID,
@@ -248,7 +281,7 @@ async def _create_source_run_record(
             "config_id": str(config_id),
             "run_at": ist_start_time.isoformat(),
         }
-        
+
         await send_source_run_report(source_run_data)
         logger.info(
             "source_run_record_created",
@@ -274,7 +307,9 @@ async def _report_source_run(
     """Update source run record with completion status and profile count."""
     try:
         # Ensure times are in IST timezone
-        ist_start_time = run_start_time if run_start_time.tzinfo else _get_ist_time(run_start_time)
+        ist_start_time = (
+            run_start_time if run_start_time.tzinfo else _get_ist_time(run_start_time)
+        )
         ist_end_time = _get_ist_time()
         source_run_data = {
             "source_run_id": str(source_run_id),
@@ -285,7 +320,7 @@ async def _report_source_run(
             "run_at": ist_start_time.isoformat(),
             "completed_at": ist_end_time.isoformat(),
         }
-        
+
         await send_source_run_report(source_run_data)
         logger.info(
             "source_run_updated",

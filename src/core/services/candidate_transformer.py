@@ -4,22 +4,23 @@ Adds UUIDs, timestamps, and required fields to match the data model.
 """
 
 import uuid
-from datetime import datetime, timezone
-from typing import Dict, Any, List
+from datetime import UTC, datetime
+from typing import Any
+
 from src.observability.logging.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 def transform_candidate_to_schema(
-    parsed_candidate: Dict[str, Any],
+    parsed_candidate: dict[str, Any],
     candidate_id: str = None,
     hash_value: str = None,
     org_id: str = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Transform parsed LinkedIn candidate data into the exact MongoDB schema.
-    
+
     Generates:
     - _id: MongoDB object ID (hex string)
     - candidate_id: UUID for candidate
@@ -28,35 +29,35 @@ def transform_candidate_to_schema(
     - Timestamps: sourced_at, updated_on
     - Required fields with defaults
     - parsed_resume_data section
-    
+
     Args:
         parsed_candidate: Raw candidate dict from parser
         candidate_id: Optional UUID for candidate
         hash_value: Optional hash for deduplication
         org_id: Organization ID for tracking
-    
+
     Returns:
         Complete candidate document in MongoDB schema format
     """
-    
-    now_iso = datetime.now(timezone.utc).isoformat()
-    
+
+    now_iso = datetime.now(UTC).isoformat()
+
     # Generate IDs if not provided
     _id = str(uuid.uuid4()).replace("-", "")[:24]  # MongoDB ObjectID format
     if not candidate_id:
         candidate_id = str(uuid.uuid4())
-    
+
     resume_id = str(uuid.uuid4())
     platform_id = str(uuid.uuid4())
     source_run_id = str(uuid.uuid4())
-    
+
     # Use provided hash_value or generate a default one
     if not hash_value:
         hash_value = ""
-    
+
     # Transform experience array with experience_id
     experience = []
-    for idx, exp in enumerate(parsed_candidate.get("experience", [])):
+    for _idx, exp in enumerate(parsed_candidate.get("experience", [])):
         transformed_exp = {
             "experience_id": str(uuid.uuid4()),
             "candidate_id": _id,  # Use MongoDB _id, not UUID candidate_id
@@ -71,7 +72,7 @@ def transform_candidate_to_schema(
         if exp.get("location"):
             transformed_exp["location"] = exp["location"]
         experience.append(transformed_exp)
-    
+
     # Transform education array with education_id
     education = []
     for edu in parsed_candidate.get("education", []):
@@ -87,7 +88,7 @@ def transform_candidate_to_schema(
         if edu.get("graduation_year"):
             transformed_edu["graduation_year"] = edu["graduation_year"]
         education.append(transformed_edu)
-    
+
     # Transform certifications array with certification_id
     certifications = []
     for cert in parsed_candidate.get("certifications", []):
@@ -103,7 +104,7 @@ def transform_candidate_to_schema(
         if cert.get("issue_date"):
             transformed_cert["issue_date"] = cert["issue_date"]
         certifications.append(transformed_cert)
-    
+
     # Transform projects array with project_id
     projects = []
     for proj in parsed_candidate.get("projects", []):
@@ -116,22 +117,32 @@ def transform_candidate_to_schema(
             "duration": proj.get("duration", ""),
         }
         projects.append(transformed_proj)
-    
+
     # Prepare soft skills
     soft_skills = parsed_candidate.get("soft_skills", [])
     if not soft_skills:
         # Extract soft skills from summary/title if not present
         text = f"{parsed_candidate.get('title', '')} {parsed_candidate.get('summary', '')}".lower()
         soft_skills_keywords = [
-            "Leadership", "Communication", "Mentorship", "Scrum", "Team Collaboration",
-            "Time Management", "Problem-Solving", "Teamwork", "Project Management",
-            "Strategic Thinking", "Stakeholder Management", "Agile", "Kanban"
+            "Leadership",
+            "Communication",
+            "Mentorship",
+            "Scrum",
+            "Team Collaboration",
+            "Time Management",
+            "Problem-Solving",
+            "Teamwork",
+            "Project Management",
+            "Strategic Thinking",
+            "Stakeholder Management",
+            "Agile",
+            "Kanban",
         ]
         soft_skills = [s for s in soft_skills_keywords if s.lower() in text]
-    
+
     # Extract languages known (if available in summary)
     languages_known = extract_languages(parsed_candidate.get("summary", ""))
-    
+
     # If summary is empty, try to create one from title and experience
     summary = parsed_candidate.get("summary", "")
     if not summary or len(summary.strip()) == 0:
@@ -139,7 +150,7 @@ def transform_candidate_to_schema(
         title = parsed_candidate.get("title", "")
         location = parsed_candidate.get("location", "")
         experience_list = parsed_candidate.get("experience", [])
-        
+
         if title or location or experience_list:
             summary_parts = []
             if title:
@@ -147,13 +158,17 @@ def transform_candidate_to_schema(
             if location:
                 summary_parts.append(f"Based in {location}")
             if experience_list:
-                companies = [exp.get("company_name", "") for exp in experience_list[:3] if exp.get("company_name")]
+                companies = [
+                    exp.get("company_name", "")
+                    for exp in experience_list[:3]
+                    if exp.get("company_name")
+                ]
                 if companies:
                     summary_parts.append(f"Experience at: {', '.join(companies)}")
             summary = " | ".join(summary_parts) if summary_parts else ""
-    
+
     logger.info(f"Summary extracted: {len(summary)} chars")
-    
+
     # Build the complete candidate document
     candidate_document = {
         "_id": _id,
@@ -197,7 +212,7 @@ def transform_candidate_to_schema(
             "languages_known": languages_known,
         },
     }
-    
+
     logger.info(
         "candidate_transformed",
         candidate_id=candidate_id,
@@ -205,11 +220,11 @@ def transform_candidate_to_schema(
         experience_count=len(experience),
         education_count=len(education),
     )
-    
+
     return candidate_document
 
 
-def extract_languages(text: str) -> List[str]:
+def extract_languages(text: str) -> list[str]:
     """Extract language names from text."""
     languages_keywords = {
         "spanish": ["spanish", "español"],
@@ -235,15 +250,15 @@ def extract_languages(text: str) -> List[str]:
         "thai": ["thai", "ไทย"],
         "vietnamese": ["vietnamese", "tiếng việt"],
     }
-    
+
     text_lower = text.lower()
     found_languages = []
-    
+
     for lang, keywords in languages_keywords.items():
         for keyword in keywords:
             if keyword in text_lower:
                 # Capitalize first letter for display
                 found_languages.append(lang.capitalize())
                 break
-    
-    return sorted(list(set(found_languages)))
+
+    return sorted(set(found_languages))

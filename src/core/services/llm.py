@@ -2,11 +2,12 @@
 
 import json
 import re
+
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
-from src.observability.logging.logger import get_logger
-from src.config.settings import get_settings
 
+from src.config.settings import get_settings
+from src.observability.logging.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -15,28 +16,29 @@ def format_candidate_with_llm(raw_candidate: dict) -> dict:
     """
     Format scraped candidate data into standardized schema using LLM.
     Aggressively cleans duplicated/garbled data from web scraping.
-    
+
     Args:
         raw_candidate: Raw candidate data from parser (may contain duplicated/garbled content)
-    
+
     Returns:
         Formatted candidate dict matching MongoDB schema
     """
     try:
         # Initialize settings
         settings = get_settings()
-        
+
         # Initialize LLM
         llm = init_chat_model(
             model="openai/gpt-oss-120b",
             model_provider="groq",
             temperature=0,
             max_tokens=4000,
-            api_key=settings.groq_api_key
+            api_key=settings.groq_api_key,
         )
-        
+
         # Create AGGRESSIVE system prompt that handles garbled/duplicated data
-        system_prompt = SystemMessage(content="""You are an expert data cleaner specializing in extracting clean, structured data from corrupted/duplicated web scraping content.
+        system_prompt = SystemMessage(
+            content="""You are an expert data cleaner specializing in extracting clean, structured data from corrupted/duplicated web scraping content.
 
 CRITICAL: Your primary job is to CLEAN AND DEDUPLICATE corrupted data, not preserve it as-is.
 
@@ -140,10 +142,12 @@ OUTPUT FORMAT:
 - All arrays: use [] if empty
 - All optional strings: use "" if empty
 - Preserve data integrity while cleaning formatting/duplication
-- MAXIMALLY EXTRACT ALL AVAILABLE INFORMATION FROM THE DATA""")
-        
+- MAXIMALLY EXTRACT ALL AVAILABLE INFORMATION FROM THE DATA"""
+        )
+
         # Create user prompt with candidate data
-        user_prompt = HumanMessage(content=f"""CLEAN, ENRICH, AND EXTRACT COMPREHENSIVE DETAILS from this candidate data:
+        user_prompt = HumanMessage(
+            content=f"""CLEAN, ENRICH, AND EXTRACT COMPREHENSIVE DETAILS from this candidate data:
 
 Raw Scraped Data:
 {json.dumps(raw_candidate, indent=2)}
@@ -212,31 +216,36 @@ CRITICAL INSTRUCTIONS:
       "credential_url": "string (URL to credential/verification if available)"
     }}
   ]
-}}""")
-        
+}}"""
+        )
+
         # Call LLM
         logger.debug("Calling LLM to format and clean candidate data")
         response = llm.invoke([system_prompt, user_prompt])
-        
+
         # Parse response
         response_text = response.content.strip()
-        
+
         # Extract JSON from response (in case LLM adds markdown code blocks)
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
         elif "```" in response_text:
             response_text = response_text.split("```")[1].split("```")[0].strip()
-        
+
         formatted_data = json.loads(response_text)
-        logger.info(f"Successfully formatted and cleaned candidate: {formatted_data.get('candidate_name', 'Unknown')}")
+        logger.info(
+            f"Successfully formatted and cleaned candidate: {formatted_data.get('candidate_name', 'Unknown')}"
+        )
         return formatted_data
-        
+
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse LLM response as JSON: {str(e)}")
-        logger.debug(f"Response was: {response_text if 'response_text' in locals() else 'N/A'}")
+        logger.debug(
+            f"Response was: {response_text if 'response_text' in locals() else 'N/A'}"
+        )
         # Return fallback format on failure
         return _fallback_format(raw_candidate)
-    
+
     except Exception as e:
         logger.error(f"Error formatting candidate with LLM: {str(e)}")
         # Return fallback format on failure
@@ -245,91 +254,103 @@ CRITICAL INSTRUCTIONS:
 
 def _fallback_format(raw_candidate: dict) -> dict:
     """Fallback formatting if LLM fails - maps raw data to schema with aggressive cleaning."""
-    
+
     # Helper to extract duration from text
     def extract_duration(text: str) -> str:
         """Extract duration pattern from text like '4 yrs 2 mos' or 'Feb 2023 - Present'."""
         if not text:
             return ""
-        
+
         # Pattern: "X yrs Y mos" or "X years Y months"
-        duration_match = re.search(r'(\d+)\s*yrs?\s+(\d+)\s*mos?', text, re.IGNORECASE)
+        duration_match = re.search(r"(\d+)\s*yrs?\s+(\d+)\s*mos?", text, re.IGNORECASE)
         if duration_match:
             years, months = duration_match.groups()
             return f"{years} years {months} months"
-        
+
         # Pattern: "X yrs" or "X years"
-        duration_match = re.search(r'(\d+)\s*yrs?(?:\s|$)', text, re.IGNORECASE)
+        duration_match = re.search(r"(\d+)\s*yrs?(?:\s|$)", text, re.IGNORECASE)
         if duration_match:
             years = duration_match.group(1)
             return f"{years} years"
-        
+
         # Pattern: "X months" or "X mos"
-        duration_match = re.search(r'(\d+)\s*mos?(?:\s|$)', text, re.IGNORECASE)
+        duration_match = re.search(r"(\d+)\s*mos?(?:\s|$)", text, re.IGNORECASE)
         if duration_match:
             months = duration_match.group(1)
             return f"{months} months"
-        
+
         # Check for "Present" or "Ongoing"
-        if re.search(r'\bpresent\b|\bongoing\b', text, re.IGNORECASE):
+        if re.search(r"\bpresent\b|\bongoing\b", text, re.IGNORECASE):
             return "Ongoing"
-        
+
         return ""
-    
+
     # Helper to clean duplicated text
     def clean_duplicates(text: str) -> str:
         """Remove duplicated sequences from text."""
         if not text:
             return ""
-        
+
         # Split by common separators and remove duplicates while preserving order
-        words = re.split(r'\s+', text)
+        words = re.split(r"\s+", text)
         cleaned = []
         prev_words = set()
-        
+
         for word in words:
             # Keep word if it's not part of a repeated sequence
             if word not in prev_words:
                 cleaned.append(word)
             prev_words.add(word)
-            
+
             # Clear previous tracking every few words to allow legitimate repeats
             if len(cleaned) % 10 == 0:
                 prev_words = set()
-        
-        return ' '.join(cleaned).strip()
-    
+
+        return " ".join(cleaned).strip()
+
     # Helper to extract clean location
     def clean_location(location: str) -> str:
         """Extract clean location (City, Country) from messy text."""
         if not location:
             return ""
-        
+
         # Remove common tech/job keywords that get mixed in
-        location = re.sub(r'\b(NodeJS|Python|JavaScript|React|Software|Developer|Engineer|Full-time|Part-time)\b', '', location, flags=re.IGNORECASE)
-        
+        location = re.sub(
+            r"\b(NodeJS|Python|JavaScript|React|Software|Developer|Engineer|Full-time|Part-time)\b",
+            "",
+            location,
+            flags=re.IGNORECASE,
+        )
+
         # Find comma-separated location pattern
-        match = re.search(r'([A-Za-z\s]+),\s*([A-Za-z\s,]+?)(?:\s*$|[\n·])', location)
+        match = re.search(r"([A-Za-z\s]+),\s*([A-Za-z\s,]+?)(?:\s*$|[\n·])", location)
         if match:
             return f"{match.group(1)}, {match.group(2)}".strip()
-        
+
         return location.strip()
-    
+
     # Helper to clean title
     def clean_title(title: str) -> str:
         """Extract clean job title from messy text."""
         if not title:
             return ""
-        
+
         # Remove dates, durations, employment type
-        title = re.sub(r'\d{4}.*?(?:·|$)', '', title)  # Remove from 4-digit year onward
-        title = re.sub(r'(?:Full-time|Part-time|Contract|Freelance|Internship|On-site|Remote).*?(?:·|$)', '', title, flags=re.IGNORECASE)
-        title = re.sub(r'\d+\s*(?:yrs?|mos?|months?|years?).*', '', title, flags=re.IGNORECASE)  # Remove duration
-        
+        title = re.sub(r"\d{4}.*?(?:·|$)", "", title)  # Remove from 4-digit year onward
+        title = re.sub(
+            r"(?:Full-time|Part-time|Contract|Freelance|Internship|On-site|Remote).*?(?:·|$)",
+            "",
+            title,
+            flags=re.IGNORECASE,
+        )
+        title = re.sub(
+            r"\d+\s*(?:yrs?|mos?|months?|years?).*", "", title, flags=re.IGNORECASE
+        )  # Remove duration
+
         # Keep only meaningful part (first 1-5 words, usually the job role)
         words = title.split()[:5]
-        return ' '.join(words).strip()
-    
+        return " ".join(words).strip()
+
     return {
         "candidate_name": clean_duplicates(raw_candidate.get("name", "")),
         "title": clean_title(raw_candidate.get("title", "")),
@@ -359,9 +380,15 @@ def _fallback_format(raw_candidate: dict) -> dict:
         "projects": [
             {
                 "title": clean_duplicates(proj.get("title", "")),
-                "description": _clean_text(clean_duplicates(proj.get("description", ""))),
+                "description": _clean_text(
+                    clean_duplicates(proj.get("description", ""))
+                ),
                 "technology_used": proj.get("technology_used", []),
-                "duration": extract_duration(proj.get("description", "") or proj.get("title", "") or proj.get("duration", "")),
+                "duration": extract_duration(
+                    proj.get("description", "")
+                    or proj.get("title", "")
+                    or proj.get("duration", "")
+                ),
                 "metrics": proj.get("metrics", ""),
             }
             for proj in raw_candidate.get("projects", [])
@@ -394,69 +421,101 @@ def _clean_text(text: str) -> str:
     """Remove buzzwords, emojis, and corrupted patterns from text."""
     if not text:
         return ""
-    
+
     # Remove common buzzwords and corporate jargon
     buzzwords = [
-        "passionate", "enthusiastic", "highly motivated", "driven",
-        "dynamic", "results-oriented", "self-starter", "team player",
-        "synergy", "paradigm", "leverage", "circle back", "touch base",
-        "thinking outside the box", "low-hanging fruit", "move the needle",
-        "deep dive", "bandwidth", "ping", "deck", "boil the ocean",
-        "strong", "proven", "extensive", "extensive experience",
-        "proficient", "expert", "specialist", "dedicated", "flexible",
-        "innovative", "creative", "proactive", "detail-oriented",
-        "goal-oriented", "ambitious", "hard-working", "committed",
-        "responsible", "skilled", "able", "capable", "experienced",
+        "passionate",
+        "enthusiastic",
+        "highly motivated",
+        "driven",
+        "dynamic",
+        "results-oriented",
+        "self-starter",
+        "team player",
+        "synergy",
+        "paradigm",
+        "leverage",
+        "circle back",
+        "touch base",
+        "thinking outside the box",
+        "low-hanging fruit",
+        "move the needle",
+        "deep dive",
+        "bandwidth",
+        "ping",
+        "deck",
+        "boil the ocean",
+        "strong",
+        "proven",
+        "extensive",
+        "extensive experience",
+        "proficient",
+        "expert",
+        "specialist",
+        "dedicated",
+        "flexible",
+        "innovative",
+        "creative",
+        "proactive",
+        "detail-oriented",
+        "goal-oriented",
+        "ambitious",
+        "hard-working",
+        "committed",
+        "responsible",
+        "skilled",
+        "able",
+        "capable",
+        "experienced",
     ]
-    
-    
+
     for buzzword in buzzwords:
         # Replace buzzword with empty string (case-insensitive)
-        text = re.sub(rf'\b{buzzword}\b', '', text, flags=re.IGNORECASE)
-    
+        text = re.sub(rf"\b{buzzword}\b", "", text, flags=re.IGNORECASE)
+
     # Remove emojis
     emoji_pattern = re.compile(
         "["
-        "\U0001F600-\U0001F64F"  # emoticons
-        "\U0001F300-\U0001F5FF"  # symbols & pictographs
-        "\U0001F680-\U0001F6FF"  # transport & map symbols
-        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U0001f600-\U0001f64f"  # emoticons
+        "\U0001f300-\U0001f5ff"  # symbols & pictographs
+        "\U0001f680-\U0001f6ff"  # transport & map symbols
+        "\U0001f1e0-\U0001f1ff"  # flags (iOS)
         "]+",
-        flags=re.UNICODE
+        flags=re.UNICODE,
     )
-    text = emoji_pattern.sub(r'', text)
-    
+    text = emoji_pattern.sub(r"", text)
+
     # Remove corrupted duplicate patterns (e.g., "Word Word Word", "Phrase Phrase")
     # This handles cases where HTML scraping produces repeated tokens
     words = text.split()
     cleaned_words = []
     skip_count = 0
-    
+
     for i, word in enumerate(words):
         if skip_count > 0:
             skip_count -= 1
             continue
-        
+
         # Check if current word repeats in next positions
         repetitions = 1
         j = i + 1
         while j < len(words) and j < i + 3 and words[j] == word:
             repetitions += 1
             j += 1
-        
+
         # Add word only once even if repeated
         if repetitions > 1:
             cleaned_words.append(word)
             skip_count = repetitions - 1
         else:
             cleaned_words.append(word)
-    
-    text = ' '.join(cleaned_words)
-    
+
+    text = " ".join(cleaned_words)
+
     # Clean up extra spaces and special characters
-    text = ' '.join(text.split())
-    
+    text = " ".join(text.split())
+
     # Remove trailing/leading punctuation and spaces
-    text = re.sub(r'^[\s\-·•]+|[\s\-·•]+$', '', text)
-    
+    text = re.sub(r"^[\s\-·•]+|[\s\-·•]+$", "", text)
+
     return text.strip()

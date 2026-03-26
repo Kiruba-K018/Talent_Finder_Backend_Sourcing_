@@ -1,4 +1,5 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+
 from src.config.settings import get_settings
 
 _client: AsyncIOMotorClient | None = None
